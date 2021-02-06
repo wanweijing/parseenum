@@ -10,10 +10,24 @@ type TTT int
 const (
 	// a1a1
 	A1 TTT = 5
+
 	// a2
 	A2
+
+	// dfdfd
+
 	// a3
 	A3
+)
+
+// STR 字符串枚举类型
+type STR string
+
+const (
+	// STR1 str1
+	STR1 STR = "aa"
+	// STR2 str2
+	STR2 STR = "bb"
 )
 
 // dfdkhfd111111

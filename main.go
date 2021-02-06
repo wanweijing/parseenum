@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	_ "parseenum/model1"
 	"strings"
 )
 
@@ -177,6 +176,7 @@ func parseProject(proName string) {
 }
 
 func main() {
+
 	// dirs := getAllProjectName()
 	// for _, v := range dirs {
 	// 	parseProject(v)
