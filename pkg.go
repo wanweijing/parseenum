@@ -10,6 +10,25 @@ import (
 	"strings"
 )
 
+type enumValueInfo struct {
+	name    string
+	comment string
+}
+
+type enumInfo struct {
+	ty    string
+	specs []enumValueInfo
+}
+
+func (e *enumInfo) makeDoc() string {
+	var items []string
+	for _, v := range e.specs {
+		items = append(items, fmt.Sprintf("%v(%v)", v.name, v.comment))
+	}
+
+	return "取值:[" + strings.Join(items, "/") + "]"
+}
+
 type pkg struct {
 	structInfos map[string]*ast.StructType
 	mod         string
@@ -20,7 +39,7 @@ type pkg struct {
 	imports map[string]string
 
 	// type 定义
-	types map[string]string
+	types map[string]*enumInfo
 }
 
 func NewPkg(mgr *global, mod string, fullPath string) *pkg {
@@ -30,7 +49,7 @@ func NewPkg(mgr *global, mod string, fullPath string) *pkg {
 		fullPath:    fullPath,
 		mgr:         mgr,
 		imports:     make(map[string]string),
-		types:       make(map[string]string),
+		types:       make(map[string]*enumInfo),
 	}
 
 	return p
@@ -71,7 +90,15 @@ func (p *pkg) printType(t ast.Expr) string {
 	}
 
 	if ty, ok := p.types[fmt.Sprintf("%v", t)]; ok {
-		return ty
+		return ty.ty + "(枚举)"
+		// str := "取值:["
+		// var enums []string
+		// for k, v := range ty {
+		// 	enums = append(enums, fmt.Sprintf("%v(%v)", k, v))
+		// }
+		// str += strings.Join(enums, "/")
+		// str += "]"
+		// return str
 	}
 
 	return fn("", t)
@@ -196,6 +223,12 @@ func (p *pkg) parseTag(tag string) string {
 }
 
 func (p *pkg) parseComment(f *ast.Field) string {
+	if temp, ok := f.Type.(*ast.Ident); ok {
+		fmt.Println(temp.Name)
+		if temp2, ok := p.types[temp.Name]; ok {
+			return temp2.makeDoc()
+		}
+	}
 	if f.Comment.Text() != "" {
 		return strings.TrimSuffix(f.Comment.Text(), "\n")
 	} else {
@@ -264,6 +297,67 @@ func (p *pkg) getAllGoFile(path string) []string {
 	return fileList
 }
 
+func (p *pkg) getEnum(decls []ast.Decl) {
+	// 首先扫描出枚举类型
+	for _, v := range decls {
+		if temp, ok := v.(*ast.GenDecl); ok {
+			if temp.Tok.String() == "type" {
+				for _, subv := range temp.Specs {
+					if temp2, ok := subv.(*ast.TypeSpec); ok {
+						if _, ok := temp2.Type.(*ast.Ident); ok {
+							p.types[temp2.Name.Name] = &enumInfo{
+								ty: fmt.Sprintf("%v", temp2.Type),
+							}
+
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(p.types) <= 0 {
+		return
+	}
+
+	fn := func(specs []ast.Spec) string {
+		for _, subv := range specs {
+			if temp2, ok := subv.(*ast.ValueSpec); ok {
+				if ty, _ := temp2.Type.(*ast.Ident); ty != nil {
+					return ty.Name
+				}
+
+			}
+		}
+
+		return ""
+	}
+
+	// 分析各个枚举的取值
+	for _, v := range decls {
+		if temp, ok := v.(*ast.GenDecl); ok {
+			if temp.Tok.String() == "const" {
+				// 解析类型
+				ty := fn(temp.Specs)
+				for _, subv := range temp.Specs {
+					if temp2, ok := subv.(*ast.ValueSpec); ok {
+						// 名字(枚举值)
+						for _, enum := range temp2.Names {
+							// 注释
+							doc := strings.TrimPrefix(temp2.Doc.Text(), enum.Name+" ")
+							doc = strings.TrimSuffix(doc, "\n")
+							p.types[ty].specs = append(p.types[ty].specs, enumValueInfo{
+								name:    enum.Name,
+								comment: doc,
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func (p *pkg) parseFile(pkgPath string, filename string, src []byte) {
 	var err error
 	if src == nil {
@@ -279,24 +373,10 @@ func (p *pkg) parseFile(pkgPath string, filename string, src []byte) {
 		panic(err)
 	}
 
-	m := file.Scope.Objects
-	for k, v := range m {
-		if temp, ok := v.Decl.(*ast.ValueSpec); ok {
-			for _, subv := range temp.Values {
-				if temp2, ok := subv.(*ast.BinaryExpr); ok {
-					if temp3, ok := temp2.Y.(*ast.BasicLit); ok {
-						fmt.Println("iota -> ", temp3.Value)
-					}
+	// m := file.Scope.Objects
+	p.getEnum(file.Decls)
 
-				} else if temp2, ok := subv.(*ast.BasicLit); ok {
-					fmt.Println("cst, ", temp2.Value)
-				}
-			}
-
-		}
-		fmt.Printf("%v, %T\n", k, v.Decl)
-	}
-	fmt.Println(m)
+	// fmt.Println(m)
 
 	for _, v := range file.Imports {
 		name := ""
@@ -310,35 +390,35 @@ func (p *pkg) parseFile(pkgPath string, filename string, src []byte) {
 		p.imports[strings.Trim(name, `"`)] = strings.Trim(v.Path.Value, `"`)
 	}
 
-	fileBuf, _ := ioutil.ReadFile(filename)
-	for _, v := range file.Decls {
-		// fmt.Println("2222, ", v.Pos(), v, v.End())
+	// fileBuf, _ := ioutil.ReadFile(filename)
+	// for _, v := range file.Decls {
+	// 	// fmt.Println("2222, ", v.Pos(), v, v.End())
 
-		begin := int(v.Pos())
-		end := int(v.End())
-		src := string(fileBuf[begin-1 : end])
+	// 	begin := int(v.Pos())
+	// 	end := int(v.End())
+	// 	src := string(fileBuf[begin-1 : end])
 
-		b := file.Comments[0].Pos()
-		c := file.Comments[0].End()
-		fmt.Println("dddd, ", string(fileBuf[b-1:c]))
+	// 	b := file.Comments[0].Pos()
+	// 	c := file.Comments[0].End()
+	// 	fmt.Println("dddd, ", string(fileBuf[b-1:c]))
 
-		if !strings.Contains(src, "\n") && !strings.Contains(src, "import ") {
-			// fmt.Println("1111,", src)
-			temps := strings.Split(src, " ")
-			// fmt.Println(temps[2])
-			temps[2] = strings.TrimSpace(temps[2])
-			// 	fmt.Println(temps[2])
-			p.types[temps[1]] = temps[2]
-		}
+	// 	if !strings.Contains(src, "\n") && !strings.Contains(src, "import ") {
+	// 		// fmt.Println("1111,", src)
+	// 		temps := strings.Split(src, " ")
+	// 		// fmt.Println(temps[2])
+	// 		temps[2] = strings.TrimSpace(temps[2])
+	// 		// 	fmt.Println(temps[2])
+	// 		p.types[temps[1]] = temps[2]
+	// 	}
 
-		// switch v.(type) {
-		// case *ast.DeclStmt:
-		// 	fmt.Println(11)
-		// }
-		// if d, ok := v.(*ast.DeclStmt); ok {
+	// 	// switch v.(type) {
+	// 	// case *ast.DeclStmt:
+	// 	// 	fmt.Println(11)
+	// 	// }
+	// 	// if d, ok := v.(*ast.DeclStmt); ok {
 
-		// }
-	}
+	// 	// }
+	// }
 
 	var collectStructs func(x ast.Node) bool
 	collectStructs = func(x ast.Node) bool {
